@@ -23,9 +23,10 @@ function AdminDashboard() {
         axios.get('http://localhost:9999/orders'),
         axios.get('http://localhost:9999/registrations')
       ]);
-      setBookings(Array.isArray(bookingRes.data) ? bookingRes.data.reverse() : []);
-      setOrders(Array.isArray(orderRes.data) ? orderRes.data.reverse() : []);
-      setRegistrations(Array.isArray(regRes.data) ? regRes.data.reverse() : []);
+      const reverseList = (arr) => (Array.isArray(arr) ? [...arr].reverse() : []);
+      setBookings(reverseList(bookingRes.data));
+      setOrders(reverseList(orderRes.data));
+      setRegistrations(reverseList(regRes.data));
     } catch (err) {
       console.error('Lỗi tải dữ liệu quản trị:', err);
     } finally {
@@ -35,6 +36,21 @@ function AdminDashboard() {
 
   useEffect(() => {
     fetchData();
+
+    // Tự động đồng bộ dữ liệu khi có cập nhật từ tab/cửa sổ khác
+    const handleSync = (e) => {
+      if (!e || !e.key || e.key === 'propickleball_mock_db') {
+        fetchData();
+      }
+    };
+
+    window.addEventListener('storage', handleSync);
+    window.addEventListener('mock_db_updated', handleSync);
+
+    return () => {
+      window.removeEventListener('storage', handleSync);
+      window.removeEventListener('mock_db_updated', handleSync);
+    };
   }, []);
 
   // Cập nhật trạng thái đặt sân

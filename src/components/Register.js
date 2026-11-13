@@ -71,7 +71,7 @@ function Register() {
           axios.get('http://localhost:9999/registrations')
         ]);
         setCourses(courseRes.data);
-        setRegistrations(regRes.data);
+        setRegistrations(Array.isArray(regRes.data) ? [...regRes.data].reverse() : []);
       } catch (err) {
         console.error('Lỗi khi tải dữ liệu trang đăng ký:', err);
         setErrorMessage('Không thể kết nối đến json-server. Vui lòng đảm bảo server đang chạy tại cổng 9999.');

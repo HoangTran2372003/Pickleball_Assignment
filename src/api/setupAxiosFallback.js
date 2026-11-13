@@ -30,6 +30,9 @@ function getLocalDb() {
 function saveLocalDb(db) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('mock_db_updated'));
+    }
   } catch (e) {
     console.warn('Lỗi ghi localStorage mock db:', e);
   }
@@ -93,7 +96,7 @@ export function setupAxiosFallback() {
             return Promise.reject(error);
           }
         } else {
-          responseData = db[resource];
+          responseData = JSON.parse(JSON.stringify(db[resource]));
         }
       } else if (method === 'post') {
         let payload = {};
@@ -109,7 +112,7 @@ export function setupAxiosFallback() {
             createdAt: payload.createdAt || new Date().toISOString(),
             ...payload,
           };
-          db[resource].unshift(newItem);
+          db[resource].push(newItem);
           saveLocalDb(db);
           responseData = newItem;
           status = 201;
@@ -163,3 +166,4 @@ export function setupAxiosFallback() {
     }
   );
 }
+
