@@ -2,6 +2,7 @@ import axios from 'axios';
 import initialDatabase from '../data/database.json';
 
 const STORAGE_KEY = 'propickleball_mock_db';
+const FIREBASE_BASE_URL = 'https://fer202-986d8-default-rtdb.firebaseio.com';
 
 /**
  * Lấy dữ liệu từ localStorage (nếu có) hoặc khởi tạo từ database.json
@@ -39,14 +40,56 @@ function saveLocalDb(db) {
 }
 
 /**
+ * Đọc dữ liệu từ Firebase Realtime Database trên mây (hoặc fallback về localStorage nếu mất mạng)
+ */
+async function fetchCloudResource(resource) {
+  try {
+    const res = await fetch(`${FIREBASE_BASE_URL}/${resource}.json`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data !== null) {
+        // Cập nhật lại localStorage làm cache dự phòng
+        const local = getLocalDb();
+        local[resource] = data;
+        saveLocalDb(local);
+        return data;
+      }
+    }
+  } catch (e) {
+    console.warn(`[Firebase] Lỗi tải ${resource}, dùng local:`, e);
+  }
+  const db = getLocalDb();
+  return db[resource];
+}
+
+/**
+ * Lưu dữ liệu lên Firebase Realtime Database và đồng bộ localStorage
+ */
+async function saveCloudResource(resource, updatedData) {
+  const local = getLocalDb();
+  local[resource] = updatedData;
+  saveLocalDb(local);
+
+  try {
+    await fetch(`${FIREBASE_BASE_URL}/${resource}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedData),
+    });
+  } catch (e) {
+    console.warn(`[Firebase] Lỗi lưu ${resource}:`, e);
+  }
+}
+
+/**
  * Cài đặt Axios Interceptor:
  * - Khi kết nối localhost:9999 thành công -> json-server phản hồi bình thường.
- * - Khi không kết nối được (deploy Vercel, offline, hoặc chưa bật json-server) -> Tự động fallback sang mock data nội bộ.
+ * - Khi không kết nối được (deploy Vercel, offline, hoặc chưa bật json-server) -> Tự động đồng bộ với Firebase Realtime Database trên đám mây.
  */
 export function setupAxiosFallback() {
   axios.interceptors.response.use(
     (response) => response,
-    (error) => {
+    async (error) => {
       const config = error.config;
       if (!config || !config.url) {
         return Promise.reject(error);
@@ -70,25 +113,20 @@ export function setupAxiosFallback() {
       }
 
       const parts = cleanPath.replace(/^\/+|\/+$/g, '').split('/');
-      const resource = parts[0]; // e.g. "courses", "courts", "products", "courtBookings", "academyInfo"
+      const resource = parts[0]; // e.g. "courses", "courts", "products", "courtBookings", "academyInfo", "orders", "registrations"
       const resourceId = parts[1]; // e.g. "1", "c6c6"
 
-      const db = getLocalDb();
       const method = (config.method || 'get').toLowerCase();
 
-      // Nếu resource không có trong mock db thì reject lỗi ban đầu
-      if (!Object.prototype.hasOwnProperty.call(db, resource)) {
-        return Promise.reject(error);
-      }
-
-      console.info(`[Vercel / Offline Fallback] Tự động phục vụ dữ liệu tĩnh cho: ${method.toUpperCase()} ${cleanPath}`);
+      // Đọc dữ liệu mới nhất từ Firebase Realtime Database
+      const cloudData = await fetchCloudResource(resource);
 
       let responseData;
       let status = 200;
 
       if (method === 'get') {
         if (resourceId) {
-          const list = Array.isArray(db[resource]) ? db[resource] : [];
+          const list = Array.isArray(cloudData) ? cloudData : Object.values(cloudData || {});
           const item = list.find((x) => String(x.id) === String(resourceId));
           if (item) {
             responseData = item;
@@ -96,7 +134,9 @@ export function setupAxiosFallback() {
             return Promise.reject(error);
           }
         } else {
-          responseData = JSON.parse(JSON.stringify(db[resource]));
+          responseData = Array.isArray(cloudData)
+            ? JSON.parse(JSON.stringify(cloudData))
+            : (cloudData || {});
         }
       } else if (method === 'post') {
         let payload = {};
@@ -106,20 +146,20 @@ export function setupAxiosFallback() {
           payload = config.data || {};
         }
 
-        if (Array.isArray(db[resource])) {
+        if (Array.isArray(cloudData)) {
           const newItem = {
             id: payload.id || Math.random().toString(36).substr(2, 6),
             createdAt: payload.createdAt || new Date().toISOString(),
             ...payload,
           };
-          db[resource].push(newItem);
-          saveLocalDb(db);
+          const updatedList = [...cloudData, newItem];
+          await saveCloudResource(resource, updatedList);
           responseData = newItem;
           status = 201;
         } else {
-          db[resource] = { ...db[resource], ...payload };
-          saveLocalDb(db);
-          responseData = db[resource];
+          const updatedObj = { ...(cloudData || {}), ...payload };
+          await saveCloudResource(resource, updatedObj);
+          responseData = updatedObj;
           status = 200;
         }
       } else if (method === 'patch' || method === 'put') {
@@ -130,26 +170,26 @@ export function setupAxiosFallback() {
           payload = config.data || {};
         }
 
-        if (Array.isArray(db[resource]) && resourceId) {
-          const index = db[resource].findIndex((x) => String(x.id) === String(resourceId));
+        if (Array.isArray(cloudData) && resourceId) {
+          const index = cloudData.findIndex((x) => String(x.id) === String(resourceId));
           if (index !== -1) {
-            db[resource][index] = { ...db[resource][index], ...payload };
-            saveLocalDb(db);
-            responseData = db[resource][index];
+            cloudData[index] = { ...cloudData[index], ...payload };
+            await saveCloudResource(resource, cloudData);
+            responseData = cloudData[index];
             status = 200;
           } else {
             return Promise.reject(error);
           }
         } else {
-          db[resource] = { ...db[resource], ...payload };
-          saveLocalDb(db);
-          responseData = db[resource];
+          const updatedObj = { ...(cloudData || {}), ...payload };
+          await saveCloudResource(resource, updatedObj);
+          responseData = updatedObj;
           status = 200;
         }
       } else if (method === 'delete') {
-        if (Array.isArray(db[resource]) && resourceId) {
-          db[resource] = db[resource].filter((x) => String(x.id) !== String(resourceId));
-          saveLocalDb(db);
+        if (Array.isArray(cloudData) && resourceId) {
+          const updatedList = cloudData.filter((x) => String(x.id) !== String(resourceId));
+          await saveCloudResource(resource, updatedList);
           responseData = {};
           status = 200;
         }
@@ -159,11 +199,10 @@ export function setupAxiosFallback() {
       return Promise.resolve({
         data: responseData,
         status: status,
-        statusText: 'OK (Mock Fallback)',
+        statusText: 'OK (Firebase Cloud Sync)',
         headers: {},
         config: config,
       });
     }
   );
 }
-
