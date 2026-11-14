@@ -27,11 +27,13 @@ function getLocalDb() {
 
 /**
  * Lưu dữ liệu cập nhật vào localStorage
+ * @param {Object} db
+ * @param {boolean} notify - Chỉ phát sự kiện khi thực sự có thao tác GHI mới
  */
-function saveLocalDb(db) {
+function saveLocalDb(db, notify = false) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-    if (typeof window !== 'undefined') {
+    if (notify && typeof window !== 'undefined') {
       window.dispatchEvent(new Event('mock_db_updated'));
     }
   } catch (e) {
@@ -48,10 +50,10 @@ async function fetchCloudResource(resource) {
     if (res.ok) {
       const data = await res.json();
       if (data !== null) {
-        // Cập nhật lại localStorage làm cache dự phòng
+        // Cập nhật lại localStorage làm cache dự phòng (KHÔNG dispatch event để tránh vòng lặp re-render)
         const local = getLocalDb();
         local[resource] = data;
-        saveLocalDb(local);
+        saveLocalDb(local, false);
         return data;
       }
     }
@@ -68,7 +70,7 @@ async function fetchCloudResource(resource) {
 async function saveCloudResource(resource, updatedData) {
   const local = getLocalDb();
   local[resource] = updatedData;
-  saveLocalDb(local);
+  saveLocalDb(local, true); // Thông báo có ghi dữ liệu mới
 
   try {
     await fetch(`${FIREBASE_BASE_URL}/${resource}.json`, {

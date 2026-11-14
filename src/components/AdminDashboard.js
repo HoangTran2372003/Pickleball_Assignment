@@ -68,9 +68,9 @@ function AdminDashboard() {
     setTimeout(() => setActionMessage(""), 4000);
   };
 
-  const fetchData = async () => {
+  const fetchData = async (showSpinner = false) => {
     try {
-      setLoading(true);
+      if (showSpinner) setLoading(true);
       const [bookingRes, orderRes, regRes, contactRes, prodRes, courseRes] =
         await Promise.all([
           axios.get("http://localhost:9999/courtBookings"),
@@ -97,26 +97,29 @@ function AdminDashboard() {
     } catch (err) {
       console.error("Lỗi tải dữ liệu quản trị:", err);
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchData();
+    fetchData(true);
 
-    // Tự động đồng bộ dữ liệu khi có cập nhật từ tab/cửa sổ khác
+    // Tự động đồng bộ ngầm khi có đơn đặt sân, đơn hàng hoặc đăng ký mới từ tab khác
+    let debounceTimer = null;
     const handleSync = (e) => {
       if (!e || !e.key || e.key === 'propickleball_mock_db') {
-        fetchData();
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          fetchData(false); // Cập nhật ngầm trong nền, không giật spinner
+        }, 400);
       }
     };
 
     window.addEventListener('storage', handleSync);
-    window.addEventListener('mock_db_updated', handleSync);
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       window.removeEventListener('storage', handleSync);
-      window.removeEventListener('mock_db_updated', handleSync);
     };
   }, []);
 
